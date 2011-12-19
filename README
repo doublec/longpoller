@@ -1,0 +1,9 @@
+This is the longpolling server I use for the mining pools I run on
+bitparking.com for various virtual currencies based on bitcoin.
+
+See [1] for a description of how to use this program.
+
+The server is written in the ATS programming language [2].
+
+[1] http://sourceforge.net/mailarchive/message.php?msg_id=28562589
+[2] http://www.ats-lang.org
