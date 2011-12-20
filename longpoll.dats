@@ -10,7 +10,14 @@ staload "longpoll.sats"
 viewtypedef request_data (l_req:addr) = @{ req= evhttp_request l_req, auth= strptr1 }
 viewtypedef request_data = [l1:agz] request_data (l1)
 
-viewtypedef context = @{ host= strptr1, port= uint16, path= strptr1, requests= List_vt (request_data), timer= Option_vt event1 }
+(*
+  requests= the list of clients waiting for a response from the server
+  responses= the list of clients we are in the process of replying to 
+
+  When a block is found the current list of 'requests' is added to 'responses' and they are processed
+  in order, responding with the block data.
+*)
+viewtypedef context = @{ host= strptr1, port= uint16, path= strptr1, requests= List_vt (request_data), responses= List_vt (request_data), timer= Option_vt event1 }
 
 fn evbuffer_of_string (s: string): [l:agz] evbuffer l = let
   val buffer = evbuffer_new ()
@@ -29,6 +36,7 @@ fn context_new (host: strptr1, port: uint16, path: strptr1): [l:agz] (free_gc_v 
   val () = p->port := port
   val () = p->path := path
   val () = p->requests := list_vt_nil
+  val () = p->responses := list_vt_nil
   val () = p->timer := None_vt
 in
   (pf_gc, pf_at | p)
@@ -82,6 +90,7 @@ fn context_free {l:agz} (pf_gc: free_gc_v (context?, l), pf_at: context @ l | p:
   val () = strptr_free (p->host)
   val () = strptr_free (p->path)
   val () = free_request_data (p->requests)
+  val () = free_request_data (p->responses)
   val () = case+ p->timer of
            | ~Some_vt t => event_free (t)
            | ~None_vt () => ()
@@ -96,10 +105,14 @@ fun send_html (req: !evhttp_request1, code: int, reason: string, html: string): 
   val () = evbuffer_free (buffer)
 }
 
-dataviewtype getwork_data (lc:addr, lr:addr) = getwork_data_container (lc, lr) of (evhttp_connection lc, evhttp_request lr)
+dataviewtype getwork_data (lc:addr, lr:addr, lctx:addr) = getwork_data_container (lc, lr, lctx) of (evhttp_connection lc, evhttp_request lr, (context @ lctx | ptr lctx))
+extern fun handle_response(ctx: &context): void
 
-fun getwork_callback {l1,l2:agz} (client: !evhttp_request1, c: getwork_data (l1, l2)):void = let
-  val ~getwork_data_container (cn, req) = c
+fun getwork_callback {l1,l2, l3:agz} (client: !evhttp_request1, c: getwork_data (l1, l2, l3)):void = let
+  val ~getwork_data_container (cn, req, (pf_ctx | p_ctx)) = c
+  val () = handle_response (!p_ctx)
+  prval () = consume_ctx (pf_ctx) where { extern prval consume_ctx {l:agz} (pf: context @ l): void }
+
   val code = if evhttp_request_isnot_null (client) then evhttp_request_get_response_code(client) else 501
 in
   if code = HTTP_OK then {
@@ -134,25 +147,28 @@ extern fun evhttp_make_request(cn: evhttp_connection1, req: evhttp_request1, typ
 extern fun evhttp_request_new {a:viewt@ype} (callback: evhttp_callback (a), arg: a): evhttp_request0 = "mac#evhttp_request_new"
 
 
-fun send_getwork {l:agz} (host: !strptr1, port: uint16, path: !strptr1, req: evhttp_request l, auth: strptr1): void = {
+fun send_getwork {l:agz} (ctx: &context, req: evhttp_request l, auth: strptr1): void = {
   val (pf_conn | conn) = evhttp_request_get_connection (req)
   val (pf_base | base) = evhttp_connection_get_base (conn)
 
   val [lc:addr] cn = evhttp_connection_base_new(base,
                                                 null,
-                                                castvwtp1 {string} (host),
-                                                port)
+                                                castvwtp1 {string} (ctx.host),
+                                                ctx.port)
   val ( )= assertloc (~cn)
   prval () = pf_base (base)
   prval () = pf_conn (conn)
 
   val c = __ref (cn) where { extern castfn __ref {l:agz} (b: !evhttp_connection l): evhttp_connection l }
-  val container = getwork_data_container (c, req)
-  val client = evhttp_request_new {getwork_data (lc, l)} (getwork_callback, container) 
+  prval pf_ctx = __ref (view@ ctx) where { extern prfun __ref {l:agz} (b: !context @ l): context @ l }
+  val container = getwork_data_container (c, req, (pf_ctx | &ctx))
+  prval [lctx:addr] () = ptr_of &ctx where { extern prfun ptr_of {l:agz} (p: ptr l): [l2:addr | l2 == l] void}
+
+  val client = evhttp_request_new {getwork_data (lc, l, lctx)} (getwork_callback, container) 
   val () = assertloc (~client)
 
   val (pff_headers | headers) = evhttp_request_get_output_headers(client)
-  val r = evhttp_add_header(headers, "Host", castvwtp1 {string} (host))
+  val r = evhttp_add_header(headers, "Host", castvwtp1 {string} (ctx.host))
   val () = assertloc (r = 0)
 
   val r = evhttp_add_header(headers, "Authorization", castvwtp1 {string} (auth))
@@ -161,7 +177,7 @@ fun send_getwork {l:agz} (host: !strptr1, port: uint16, path: !strptr1, req: evh
   val r = evhttp_add_header(headers, "Content-Type", "application/json")
   val () = assertloc (r = 0)
 
-  val () = printf("Host: %s Port %d Auth %s\n", @(castvwtp1 {string} (host), int_of_uint16 port, castvwtp1 {string} (auth)))
+  val () = printf("Host: %s Port %d Auth %s\n", @(castvwtp1 {string} (ctx.host), int_of_uint16 ctx.port, castvwtp1 {string} (auth)))
 
   val (pff_buffer | buffer) = evhttp_request_get_output_buffer (client)
   val s = "{\"method\":\"getwork\",\"params\":[],\"id\":\"0\"}";
@@ -169,33 +185,34 @@ fun send_getwork {l:agz} (host: !strptr1, port: uint16, path: !strptr1, req: evh
   val () = assertloc (r = 0)
   prval () = pff_buffer (buffer)
 
-  val r = evhttp_make_request(cn, client, EVHTTP_REQ_POST, castvwtp1 {string} (path))
+  val r = evhttp_make_request(cn, client, EVHTTP_REQ_POST, castvwtp1 {string} (ctx.path))
   val () = assertloc (r = 0)
 
   val () = strptr_free (auth)
   prval () = pff_headers (headers)
 }
 
-fun newblock_callback (req: !evhttp_request1, ctx: &context): void = {
-  fun loop (ctx: &context):void =
-    case+ ctx.requests of
-      | ~list_vt_nil () => ctx.requests := list_vt_nil ()
+implement handle_response(ctx) = 
+    case+ ctx.responses of
+      | ~list_vt_nil () => ctx.responses := list_vt_nil
       | ~list_vt_cons (data, xs) => {
                                       val (pff_conn | conn) = evhttp_request_get_connection (data.req)
                                       val req = data.req
                                       val auth = data.auth
-                                      val () = ctx.requests := xs
-                                      val () = if ~conn then send_getwork (ctx.host, ctx.port, ctx.path, req, auth) else {
+                                      val () = ctx.responses := xs
+                                      val () = if ~conn then send_getwork (ctx, req, auth) else {
                                                  val () = strptr_free (auth)
                                                  val () = evhttp_send_reply_end (req)
                                                  val _ = request_free (req) where { extern castfn request_free {l:agz} (r: evhttp_request l): ptr l }
+                                                 val () = handle_response (ctx)
                                                }
-
                                       prval () = pff_conn (conn)
-                                      val () = loop (ctx)
                                     }
-  
-  val () = loop (ctx)
+
+fun newblock_callback (req: !evhttp_request1, ctx: &context): void = {
+  val () = ctx.responses := list_vt_append (ctx.responses, ctx.requests)
+  val () = ctx.requests := list_vt_nil 
+  val () = handle_response(ctx)
   val () = send_html (req, 200, "OK", "<html><body>Ping handled</body></html>")
 }
 
