@@ -106,7 +106,6 @@ fun send_html (req: evhttp_request1, code: int, reason: string, html: string): v
 
 viewtypedef getwork_callback = (!evhttp_request1) -<lincloptr1> void
 dataviewtype getwork_data (lc:addr) = getwork_data_container (lc) of (evhttp_connection lc, getwork_callback)
-extern fun handle_response(ctx: &context): void
 
 fun handle_getwork {l:agz} (client: !evhttp_request1, c: getwork_data l):void = let
   val ~getwork_data_container (cn, cb) = c
@@ -157,7 +156,7 @@ fun send_getwork {l:agz} (base: !event_base l, host: string, port: uint16, path:
   prval () = pff_headers (headers)
 }
 
-implement handle_response(ctx) = 
+fun handle_response(ctx: &context): void =
     case+ ctx.responses of
       | ~list_vt_nil () => ctx.responses := list_vt_nil
       | ~list_vt_cons (data, xs) => {
