@@ -116,8 +116,8 @@ in
 end
 
 typedef evhttp_callback (t1:viewt@ype) = (!evhttp_request1, t1) -> void
-extern fun evhttp_make_request(cn: evhttp_connection1, req: evhttp_request1, type: evhttp_cmd_type, uri: string):[n:int | n == ~1 || n == 0] int n = "mac#evhttp_make_request"
 extern fun evhttp_request_new {a:viewt@ype} (callback: evhttp_callback (a), arg: a): evhttp_request0 = "mac#evhttp_request_new"
+
 
 fun send_getwork {l:agz} (base: !event_base l, host: string, port: uint16, path: string, auth: string, cb: getwork_callback): void = {
   val [lc:addr] cn = evhttp_connection_base_new(base,
@@ -126,6 +126,7 @@ fun send_getwork {l:agz} (base: !event_base l, host: string, port: uint16, path:
                                                 port)
   val () = assertloc (~cn)
 
+  (* Copy a reference to the connection so we can pass it to the callback when the request is made *)
   val c = __ref (cn) where { extern castfn __ref {l:agz} (b: !evhttp_connection l): evhttp_connection l }
   val container = getwork_data_container (c, cb)
 
@@ -153,6 +154,9 @@ fun send_getwork {l:agz} (base: !event_base l, host: string, port: uint16, path:
   val r = evhttp_make_request(cn, client, EVHTTP_REQ_POST, path)
   val () = assertloc (r = 0)
 
+  (* The connection is freed when the callback for the request is handled *)
+  prval () = __unref (cn) where { extern prfun __unref {l:agz} (b: evhttp_connection l): void }
+ 
   prval () = pff_headers (headers)
 }
 
