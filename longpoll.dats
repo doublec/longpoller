@@ -82,7 +82,6 @@ fun free_request_data (requests: List_vt (request_data)) =
     | ~list_vt_cons (data, xs) => {
                                     val () = strptr_free (data.auth)
                                     val () = evhttp_send_reply_end (data.req)
-                                    val _ = request_free (data.req) where { extern castfn request_free {l:agz} (r: evhttp_request l): ptr l }
                                     val () = free_request_data (xs)
                                   }
 
@@ -99,7 +98,7 @@ in
 end
 
 
-fun send_html (req: !evhttp_request1, code: int, reason: string, html: string): void = {
+fun send_html (req: evhttp_request1, code: int, reason: string, html: string): void = {
   val buffer = evbuffer_of_string (html)
   val () = evhttp_send_reply (req, 200, "OK", buffer)
   val () = evbuffer_free (buffer)
@@ -187,7 +186,6 @@ implement handle_response(ctx) =
                                             val () = evhttp_send_reply_end (req)
                                             prval () = pff_in (inbuf)
                                             val () = evbuffer_free (outbuf)
-                                            val _ = request_free (req) where { extern castfn request_free {l:agz} (r: evhttp_request l): ptr l } 
                                           }
                                           else {
                                             val () = printf("result: %d\n", @(code))
@@ -195,8 +193,6 @@ implement handle_response(ctx) =
                                             val () = evhttp_send_reply_chunk (req, buffer)
                                             val () = evhttp_send_reply_end (req)
                                             val () = evbuffer_free (buffer)
-
-                                            val _ = request_free (req) where { extern castfn request_free {l:agz} (r: evhttp_request l): ptr l } 
                                          }
                                         end
 
@@ -204,7 +200,6 @@ implement handle_response(ctx) =
                                       }
                                       else {
                                         val () = evhttp_send_reply_end (req)
-                                        val _ = request_free (req) where { extern castfn request_free {l:agz} (r: evhttp_request l): ptr l }
                                         val () = handle_response (ctx)
                                       }
                                       val () = strptr_free (auth)
@@ -212,14 +207,14 @@ implement handle_response(ctx) =
                                       prval () = pff_conn (conn)
                                     }
 
-fun newblock_callback (req: !evhttp_request1, ctx: &context): void = {
+fun newblock_callback (req: evhttp_request1, ctx: &context): void = {
   val () = ctx.responses := list_vt_append (ctx.responses, ctx.requests)
   val () = ctx.requests := list_vt_nil 
   val () = handle_response(ctx)
   val () = send_html (req, 200, "OK", "<html><body>Ping handled</body></html>")
 }
 
-fun longpoll_callback (req: !evhttp_request1, ctx: &context): void = {
+fun longpoll_callback (req: evhttp_request1, ctx: &context): void = {
   val (pff_headers | headers) = evhttp_request_get_input_headers (req)
   val (pff_auth | auth) = evhttp_find_header (headers, "Authorization")
   val () = if strptr_is_null (auth) then 
@@ -228,7 +223,6 @@ fun longpoll_callback (req: !evhttp_request1, ctx: &context): void = {
              val () = assertloc (strptr_isnot_null (auth))
              val () = evhttp_send_reply_start (req, 200, "OK")
 
-             val req = __ref (req) where { extern castfn __ref {l:agz} (r: !evhttp_request l): evhttp_request l }
              val auth = strptr_dup (auth) 
              val () = ctx.requests := list_vt_cons (@{ req= req, auth= auth}, ctx.requests)
              val () = printf("Request count: %d\n", @(list_vt_length (ctx.requests)))
@@ -239,7 +233,7 @@ fun longpoll_callback (req: !evhttp_request1, ctx: &context): void = {
 }
 
 
-typedef evhttp_callback (t1:viewt@ype) = (!evhttp_request1, &t1) -> void
+typedef evhttp_callback (t1:viewt@ype) = (evhttp_request1, &t1) -> void
 extern fun evhttp_set_cb {a:viewt@ype} {lh,lb:agz} (http: !evhttp (lh, lb), path: string, callback: evhttp_callback (a), arg: &a): [n:int | n == ~2 || n == ~1 || n == 0] int n = "mac#evhttp_set_cb"
 
 assume longpoller (lh:addr, lb:addr) = [l:agz] @{ gcview= free_gc_v (context?, l), atview= context @ l, ptr= ptr l }
