@@ -105,79 +105,46 @@ fun send_html (req: !evhttp_request1, code: int, reason: string, html: string): 
   val () = evbuffer_free (buffer)
 }
 
-dataviewtype getwork_data (lc:addr, lr:addr, lctx:addr) = getwork_data_container (lc, lr, lctx) of (evhttp_connection lc, evhttp_request lr, (context @ lctx | ptr lctx))
+viewtypedef getwork_callback = (!evhttp_request1) -<lincloptr1> void
+dataviewtype getwork_data (lc:addr) = getwork_data_container (lc) of (evhttp_connection lc, getwork_callback)
 extern fun handle_response(ctx: &context): void
 
-fun getwork_callback {l1,l2, l3:agz} (client: !evhttp_request1, c: getwork_data (l1, l2, l3)):void = let
-  val ~getwork_data_container (cn, req, (pf_ctx | p_ctx)) = c
-  val () = handle_response (!p_ctx)
-  prval () = consume_ctx (pf_ctx) where { extern prval consume_ctx {l:agz} (pf: context @ l): void }
-
-  val code = if evhttp_request_isnot_null (client) then evhttp_request_get_response_code(client) else 501
+fun handle_getwork {l:agz} (client: !evhttp_request1, c: getwork_data l):void = let
+  val ~getwork_data_container (cn, cb) = c
+  val () = cb (client)
+  val () = cloptr_free (cb)
 in
-  if code = HTTP_OK then {
-                   val (pff_in | inbuf) = evhttp_request_get_input_buffer (client)
-                   val outbuf = evbuffer_new ()
-                   val () = assertloc (~outbuf)
-
-                   val r = evbuffer_add_buffer (outbuf, inbuf)
-                   val () = assertloc (r = 0)
-
-                   val () = evhttp_send_reply_chunk (req, outbuf)
-                   val () = evhttp_send_reply_end (req)
-                   prval () = pff_in (inbuf)
-                   val () = evbuffer_free (outbuf)
-                   val _ = request_free (req) where { extern castfn request_free {l:agz} (r: evhttp_request l): ptr l } 
-                   val () = evhttp_connection_free (cn)
-                }
-    else {
-             val () = printf("result: %d\n", @(code))
-             val buffer = evbuffer_of_string ("{\"result\":null,\"error\":{\"code\":-1,\"message\":\"Could not contact daemon\"},\"id\":1}")
-             val () = evhttp_send_reply_chunk (req, buffer)
-             val () = evhttp_send_reply_end (req)
-             val () = evbuffer_free (buffer)
-
-             val () = evhttp_connection_free (cn)
-             val _ = request_free (req) where { extern castfn request_free {l:agz} (r: evhttp_request l): ptr l } 
-           }
+  evhttp_connection_free (cn)
 end
 
 typedef evhttp_callback (t1:viewt@ype) = (!evhttp_request1, t1) -> void
 extern fun evhttp_make_request(cn: evhttp_connection1, req: evhttp_request1, type: evhttp_cmd_type, uri: string):[n:int | n == ~1 || n == 0] int n = "mac#evhttp_make_request"
 extern fun evhttp_request_new {a:viewt@ype} (callback: evhttp_callback (a), arg: a): evhttp_request0 = "mac#evhttp_request_new"
 
-
-fun send_getwork {l:agz} (ctx: &context, req: evhttp_request l, auth: strptr1): void = {
-  val (pf_conn | conn) = evhttp_request_get_connection (req)
-  val (pf_base | base) = evhttp_connection_get_base (conn)
-
+fun send_getwork {l:agz} (base: !event_base l, host: string, port: uint16, path: string, auth: string, cb: getwork_callback): void = {
   val [lc:addr] cn = evhttp_connection_base_new(base,
                                                 null,
-                                                castvwtp1 {string} (ctx.host),
-                                                ctx.port)
-  val ( )= assertloc (~cn)
-  prval () = pf_base (base)
-  prval () = pf_conn (conn)
+                                                host,
+                                                port)
+  val () = assertloc (~cn)
 
   val c = __ref (cn) where { extern castfn __ref {l:agz} (b: !evhttp_connection l): evhttp_connection l }
-  prval pf_ctx = __ref (view@ ctx) where { extern prfun __ref {l:agz} (b: !context @ l): context @ l }
-  val container = getwork_data_container (c, req, (pf_ctx | &ctx))
-  prval [lctx:addr] () = ptr_of &ctx where { extern prfun ptr_of {l:agz} (p: ptr l): [l2:addr | l2 == l] void}
+  val container = getwork_data_container (c, cb)
 
-  val client = evhttp_request_new {getwork_data (lc, l, lctx)} (getwork_callback, container) 
+  val client = evhttp_request_new {getwork_data lc} (handle_getwork, container) 
   val () = assertloc (~client)
 
   val (pff_headers | headers) = evhttp_request_get_output_headers(client)
-  val r = evhttp_add_header(headers, "Host", castvwtp1 {string} (ctx.host))
+  val r = evhttp_add_header(headers, "Host", host)
   val () = assertloc (r = 0)
 
-  val r = evhttp_add_header(headers, "Authorization", castvwtp1 {string} (auth))
+  val r = evhttp_add_header(headers, "Authorization", auth)
   val () = assertloc (r = 0)
 
   val r = evhttp_add_header(headers, "Content-Type", "application/json")
   val () = assertloc (r = 0)
 
-  val () = printf("Host: %s Port %d Auth %s\n", @(castvwtp1 {string} (ctx.host), int_of_uint16 ctx.port, castvwtp1 {string} (auth)))
+  val () = printf("Host: %s Port %d Auth %s\n", @(host, int_of_uint16 port, auth))
 
   val (pff_buffer | buffer) = evhttp_request_get_output_buffer (client)
   val s = "{\"method\":\"getwork\",\"params\":[],\"id\":\"0\"}";
@@ -185,10 +152,9 @@ fun send_getwork {l:agz} (ctx: &context, req: evhttp_request l, auth: strptr1): 
   val () = assertloc (r = 0)
   prval () = pff_buffer (buffer)
 
-  val r = evhttp_make_request(cn, client, EVHTTP_REQ_POST, castvwtp1 {string} (ctx.path))
+  val r = evhttp_make_request(cn, client, EVHTTP_REQ_POST, path)
   val () = assertloc (r = 0)
 
-  val () = strptr_free (auth)
   prval () = pff_headers (headers)
 }
 
@@ -196,16 +162,53 @@ implement handle_response(ctx) =
     case+ ctx.responses of
       | ~list_vt_nil () => ctx.responses := list_vt_nil
       | ~list_vt_cons (data, xs) => {
-                                      val (pff_conn | conn) = evhttp_request_get_connection (data.req)
                                       val req = data.req
                                       val auth = data.auth
                                       val () = ctx.responses := xs
-                                      val () = if ~conn then send_getwork (ctx, req, auth) else {
-                                                 val () = strptr_free (auth)
-                                                 val () = evhttp_send_reply_end (req)
-                                                 val _ = request_free (req) where { extern castfn request_free {l:agz} (r: evhttp_request l): ptr l }
-                                                 val () = handle_response (ctx)
-                                               }
+                                      val (pff_conn | conn) = evhttp_request_get_connection (req)
+                                      val (pff_base | base) = evhttp_connection_get_base (conn)
+                                      val () = if ~conn then {
+                                        prval pf_ctx = __ref (view@ ctx) where { extern prfun __ref {l:agz} (r: !context @ l): context @ l }  
+
+                                        val cb: getwork_callback = llam (client: !evhttp_request1): void =<lincloptr1> let
+                                          val () = handle_response (ctx)
+                                          prval () = consume_ctx (pf_ctx) where { extern prval consume_ctx {l:agz} (pf: context @ l): void }
+                                          val code = if evhttp_request_isnot_null (client) then evhttp_request_get_response_code(client) else 501
+                                        in
+                                          if code = HTTP_OK then {
+                                            val (pff_in | inbuf) = evhttp_request_get_input_buffer (client)
+                                            val outbuf = evbuffer_new ()
+                                            val () = assertloc (~outbuf)
+
+                                            val r = evbuffer_add_buffer (outbuf, inbuf)
+                                            val () = assertloc (r = 0)
+
+                                            val () = evhttp_send_reply_chunk (req, outbuf)
+                                            val () = evhttp_send_reply_end (req)
+                                            prval () = pff_in (inbuf)
+                                            val () = evbuffer_free (outbuf)
+                                            val _ = request_free (req) where { extern castfn request_free {l:agz} (r: evhttp_request l): ptr l } 
+                                          }
+                                          else {
+                                            val () = printf("result: %d\n", @(code))
+                                            val buffer = evbuffer_of_string ("{\"result\":null,\"error\":{\"code\":-1,\"message\":\"Could not contact daemon\"},\"id\":1}")
+                                            val () = evhttp_send_reply_chunk (req, buffer)
+                                            val () = evhttp_send_reply_end (req)
+                                            val () = evbuffer_free (buffer)
+
+                                            val _ = request_free (req) where { extern castfn request_free {l:agz} (r: evhttp_request l): ptr l } 
+                                         }
+                                        end
+
+                                        val () = send_getwork (base, castvwtp1 {string} (ctx.host), ctx.port, castvwtp1 {string} (ctx.path), castvwtp1 {string} (auth), cb)
+                                      }
+                                      else {
+                                        val () = evhttp_send_reply_end (req)
+                                        val _ = request_free (req) where { extern castfn request_free {l:agz} (r: evhttp_request l): ptr l }
+                                        val () = handle_response (ctx)
+                                      }
+                                      val () = strptr_free (auth)
+                                      prval () = pff_base (base)
                                       prval () = pff_conn (conn)
                                     }
 
