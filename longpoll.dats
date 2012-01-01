@@ -231,10 +231,6 @@ fun longpoll_callback (req: evhttp_request1, ctx: &context): void = {
   prval () = pff_headers (headers)
 }
 
-
-typedef evhttp_callback (t1:viewt@ype) = (evhttp_request1, &t1) -> void
-extern fun evhttp_set_cb {a:viewt@ype} {lh,lb:agz} (http: !evhttp (lh, lb), path: string, callback: evhttp_callback (a), arg: &a): [n:int | n == ~2 || n == ~1 || n == 0] int n = "mac#evhttp_set_cb"
-
 assume longpoller (lh:addr, lb:addr) = [l:agz] @{ gcview= free_gc_v (context?, l), atview= context @ l, ptr= ptr l }
 
 implement longpoller_new {lh,lb} (base, http, url, poll_path, ping_path) = let
