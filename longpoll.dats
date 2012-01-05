@@ -168,8 +168,8 @@ fun handle_response(ctx: &context): void =
                                       val auth = data.auth
                                       val () = ctx.responses := xs
                                       val (pff_conn | conn) = evhttp_request_get_connection (req)
-                                      val (pff_base | base) = evhttp_connection_get_base (conn)
                                       val () = if ~conn then {
+                                        val (pff_base | base) = evhttp_connection_get_base (conn)
                                         prval pf_ctx = __ref (view@ ctx) where { extern prfun __ref {l:agz} (r: !context @ l): context @ l }  
 
                                         val cb: getwork_callback = llam (client: !evhttp_request1): void =<lincloptr1> let
@@ -200,13 +200,14 @@ fun handle_response(ctx: &context): void =
                                         end
 
                                         val () = send_getwork (base, castvwtp1 {string} (ctx.host), ctx.port, castvwtp1 {string} (ctx.path), castvwtp1 {string} (auth), cb)
+                                        prval () = pff_base (base)
+
                                       }
                                       else {
                                         val () = evhttp_send_reply_end (req)
                                         val () = handle_response (ctx)
                                       }
                                       val () = strptr_free (auth)
-                                      prval () = pff_base (base)
                                       prval () = pff_conn (conn)
                                     }
 
